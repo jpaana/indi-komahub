@@ -32,7 +32,7 @@ static KOMAHUB *hubs[MAX_DEVICES];
 
 static void cleanup()
 {
-    for (int i = 0; i < hubCount; i++)
+    for (int i = 0; i < hubCount; ++i)
     {
         delete hubs[i];
     }
@@ -70,7 +70,7 @@ void ISInit()
 void ISGetProperties(const char *dev)
 {
     ISInit();
-    for (int i = 0; i < hubCount; i++)
+    for (int i = 0; i < hubCount; ++i)
     {
         KOMAHUB *hub = hubs[i];
         if (dev == NULL || !strcmp(dev, hub->name))
@@ -85,7 +85,7 @@ void ISGetProperties(const char *dev)
 void ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int num)
 {
     ISInit();
-    for (int i = 0; i < hubCount; i++)
+    for (int i = 0; i < hubCount; ++i)
     {
         KOMAHUB *hub = hubs[i];
         if (dev == NULL || !strcmp(dev, hub->name))
@@ -100,7 +100,7 @@ void ISNewSwitch(const char *dev, const char *name, ISState *states, char *names
 void ISNewText(const char *dev, const char *name, char *texts[], char *names[], int num)
 {
     ISInit();
-    for (int i = 0; i < hubCount; i++)
+    for (int i = 0; i < hubCount; ++i)
     {
         KOMAHUB *hub = hubs[i];
         if (dev == NULL || !strcmp(dev, hub->name))
@@ -115,7 +115,7 @@ void ISNewText(const char *dev, const char *name, char *texts[], char *names[], 
 void ISNewNumber(const char *dev, const char *name, double values[], char *names[], int num)
 {
     ISInit();
-    for (int i = 0; i < hubCount; i++)
+    for (int i = 0; i < hubCount; ++i)
     {
         KOMAHUB *hub = hubs[i];
         if (dev == NULL || !strcmp(dev, hub->name))
@@ -143,7 +143,7 @@ void ISSnoopDevice(XMLEle *root)
 {
     ISInit();
 
-    for (int i = 0; i < hubCount; i++)
+    for (int i = 0; i < hubCount; ++i)
     {
         KOMAHUB *hub = hubs[i];
         hub->ISSnoopDevice(root);
@@ -237,7 +237,7 @@ bool KOMAHUB::readStatus()
     InputVoltageNP.s    = (InputVoltageN.value > 11.0 && InputVoltageN.value < 14) ? IPS_OK : IPS_ALERT;
     IDSetNumber(&InputVoltageNP, nullptr);
 
-    for (unsigned int p = 0; p < numPorts; p++)
+    for (unsigned int p = 0; p < numPorts; ++p)
     {
         Ports[p].CurrentN.value = status.outputPower[p] / 10.0;
         Ports[p].CurrentNP.s =
@@ -254,6 +254,60 @@ bool KOMAHUB::readStatus()
             (status.fuseIsBlownBits >> p) & 1 ? IPS_ALERT : (status.relayIsOpenBits >> p) & 1 ? IPS_OK : IPS_IDLE;
         IDSetSwitch(&Ports[p].EnableSP, nullptr);
     }
+
+    numTemperatureProbes  = status.numberOfTemperatureProbes;
+    pthPresent            = (status.pthpresent == 1);
+    skyqualityPresent     = (status.skyqualitypresent == 1);
+    skytemperaturePresent = (status.skytemperaturepresent == 1);
+
+    if (numTemperatureProbes > 0)
+    {
+        for (unsigned t = 0; t < numTemperatureProbes; ++t)
+        {
+            TemperaturesN[t].value = status.temperatureProbes[t] / 10;
+        }
+        // Check if haven't initialized the property yet
+        if (TemperaturesNP.s == IPS_OK)
+        {
+            IDSetNumber(&TemperaturesNP, nullptr);
+        }
+        TemperaturesNP.s = IPS_OK;
+    }
+
+    if (pthPresent)
+    {
+        TemperatureN.value = status.temperature / 10;
+        TemperatureNP.s    = IPS_OK;
+        IDSetNumber(&TemperatureNP, nullptr);
+
+        HumidityN.value = status.humidity;
+        HumidityNP.s    = IPS_OK;
+        IDSetNumber(&HumidityNP, nullptr);
+
+        PressureN.value = status.pressure / 10;
+        PressureNP.s    = IPS_OK;
+        IDSetNumber(&PressureNP, nullptr);
+
+        DewpointN.value = status.dewpoint / 10;
+        DewpointNP.s    = IPS_OK;
+        IDSetNumber(&DewpointNP, nullptr);
+    }
+
+    if (skyqualityPresent)
+    {
+        SkyQualityN[0].value = status.skyquality / 10;
+        SkyQualityN[1].value = status.skyqualityfreq / 10;
+        SkyQualityNP.s       = IPS_OK;
+        IDSetNumber(&SkyQualityNP, nullptr);
+    }
+
+    if (skytemperaturePresent)
+    {
+        SkyTemperatureN[0].value = status.skytemperature / 10;
+        SkyTemperatureN[1].value = status.skyambienttemperature / 10;
+        SkyTemperatureNP.s       = IPS_OK;
+        IDSetNumber(&SkyTemperatureNP, nullptr);
+    }
     return true;
 }
 
@@ -265,7 +319,7 @@ bool KOMAHUB::readOutputSettings()
         return false;
     }
 
-    for (unsigned char p = 0; p < numPorts; p++)
+    for (unsigned char p = 0; p < numPorts; ++p)
     {
         unsigned char buf[3]              = { magic, GETOUTPUTSETTINGS, p };
         GetOutputSettingsResponse *status = &Ports[p].settings;
@@ -398,7 +452,7 @@ bool KOMAHUB::initProperties()
     IUFillNumberVector(&InputVoltageNP, &InputVoltageN, 1, getDeviceName(), "INPUT_VOLTAGE", "Input voltage",
                        MAIN_CONTROL_TAB, IP_RO, 60, IPS_IDLE);
 
-    for (unsigned int p = 0; p < numPorts; p++)
+    for (unsigned int p = 0; p < numPorts; ++p)
     {
         char str[32];
         char label[32];
@@ -443,6 +497,48 @@ bool KOMAHUB::initProperties()
         IUFillNumberVector(&Ports[p].DutyCycleNP, &Ports[p].DutyCycleN, 1, getDeviceName(), str, label,
                            MAIN_CONTROL_TAB, IP_RW, 60, IPS_IDLE);
     }
+
+    // DS18B20 probes, vector initialized later
+    for (unsigned int t = 0; t < 4; ++t)
+    {
+        char str[32];
+        char label[32];
+
+        snprintf(str, 32, "TEMP_%d", t);
+        snprintf(label, 32, "Temperature %d", t + 1);
+        IUFillNumber(&TemperaturesN[t], str, label, "%3.2f", -100.0, 100.0, 0, 0.0);
+    }
+
+    // BME280
+    IUFillNumber(&HumidityN, "VALUE", "%", "%3.0f", 0, 100, 0, 0);
+    IUFillNumberVector(&HumidityNP, &HumidityN, 1, getDeviceName(), "HUMIDITY", "Humidity", INFO_TAB, IP_RO, 60,
+                       IPS_IDLE);
+
+    IUFillNumber(&PressureN, "VALUE", "hPa", "%4.0f", 900, 1100, 0, 0);
+    IUFillNumberVector(&PressureNP, &PressureN, 1, getDeviceName(), "PRESSURE", "Pressure", INFO_TAB, IP_RO, 60,
+                       IPS_IDLE);
+
+    IUFillNumber(&TemperatureN, "VALUE", "C", "%3.0f", -100, 100, 0, 0);
+    IUFillNumberVector(&TemperatureNP, &TemperatureN, 1, getDeviceName(), "TEMPERATURE", "Temperature", INFO_TAB, IP_RO,
+                       60, IPS_IDLE);
+
+    IUFillNumber(&DewpointN, "VALUE", "C", "%3.0f", -100, 100, 0, 0);
+    IUFillNumberVector(&DewpointNP, &DewpointN, 1, getDeviceName(), "DEWPOINT", "Dewpoint", INFO_TAB, IP_RO, 60,
+                       IPS_IDLE);
+
+    // TSL237
+    IUFillNumber(&SkyQualityN[0], "SKY_BRIGHTNESS", "Mag/Arcsec^2", "%3.2f", -20, 30, 0,
+                 0); // Property snooped by INDICCD
+    IUFillNumber(&SkyQualityN[1], "SENSOR_FREQUENCY", "Hz", "%6.2f", 0, 5000000, 0, 0);
+    IUFillNumberVector(&SkyQualityNP, SkyQualityN, 2, getDeviceName(), "SKY_QUALITY", "Sky Quality", INFO_TAB, IP_RO,
+                       60, IPS_IDLE);
+
+    // PLX90614
+    IUFillNumber(&SkyTemperatureN[0], "SKY_TEMPERATURE", "C", "%3.2f", -100, 100, 0, 0);
+    IUFillNumber(&SkyTemperatureN[1], "AMBIENT", "C", "%3.2f", -100, 100, 0, 0);
+    IUFillNumberVector(&SkyTemperatureNP, SkyTemperatureN, 2, getDeviceName(), "SKY_TEMPERATURE", "Sky Temperature",
+                       INFO_TAB, IP_RO, 60, IPS_IDLE);
+
     return true;
 }
 
@@ -464,7 +560,7 @@ bool KOMAHUB::updateProperties()
         defineText(&VersionsTP);
         defineNumber(&InputVoltageNP);
 
-        for (unsigned int p = 0; p < numPorts; p++)
+        for (unsigned int p = 0; p < numPorts; ++p)
         {
             defineText(&Ports[p].NameTP);
             defineSwitch(&Ports[p].EnableSP);
@@ -473,13 +569,44 @@ bool KOMAHUB::updateProperties()
             defineNumber(&Ports[p].DutyCycleNP);
             defineNumber(&Ports[p].CurrentNP);
         }
+
+        // Configure sensors according to status
+        // DS18B20 temperature probes
+        if (numTemperatureProbes > 0)
+        {
+            IUFillNumberVector(&TemperaturesNP, TemperaturesN, numTemperatureProbes, getDeviceName(), "TEMPERATURES",
+                               "Temperatures", INFO_TAB, IP_RO, 60, IPS_IDLE);
+
+            defineNumber(&TemperaturesNP);
+        }
+
+        // BM280 pressure-temperature-humidity sensor
+        if (pthPresent)
+        {
+            defineNumber(&PressureNP);
+            defineNumber(&HumidityNP);
+            defineNumber(&TemperatureNP);
+            defineNumber(&DewpointNP);
+        }
+
+        // TSL237 sky quality sensor
+        if (skyqualityPresent)
+        {
+            defineNumber(&SkyQualityNP);
+        }
+
+        // PLX90614 sky temperature sensor
+        if (skytemperaturePresent)
+        {
+            defineNumber(&SkyTemperatureNP);
+        }
         SetTimer(POLLMS);
     }
     else
     {
         deleteProperty(VersionsTP.name);
         deleteProperty(InputVoltageNP.name);
-        for (unsigned int p = 0; p < numPorts; p++)
+        for (unsigned int p = 0; p < numPorts; ++p)
         {
             deleteProperty(Ports[p].NameTP.name);
             deleteProperty(Ports[p].EnableSP.name);
@@ -487,6 +614,29 @@ bool KOMAHUB::updateProperties()
             deleteProperty(Ports[p].FuseNP.name);
             deleteProperty(Ports[p].DutyCycleNP.name);
             deleteProperty(Ports[p].CurrentNP.name);
+        }
+
+        if (numTemperatureProbes > 0)
+        {
+            deleteProperty(TemperaturesNP.name);
+        }
+        if (pthPresent)
+        {
+            deleteProperty(PressureNP.name);
+            deleteProperty(HumidityNP.name);
+            deleteProperty(TemperatureNP.name);
+            deleteProperty(DewpointNP.name);
+        }
+        // TSL237 sky quality sensor
+        if (skyqualityPresent)
+        {
+            deleteProperty(SkyQualityNP.name);
+        }
+
+        // PLX90614 sky temperature sensor
+        if (skytemperaturePresent)
+        {
+            deleteProperty(SkyTemperatureNP.name);
         }
     }
     return true;
@@ -518,7 +668,7 @@ bool KOMAHUB::ISNewText(const char *dev, const char *name, char *texts[], char *
 {
     if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
     {
-        for (unsigned int p = 0; p < numPorts; p++)
+        for (unsigned int p = 0; p < numPorts; ++p)
         {
             if (!strcmp(Ports[p].NameTP.name, name))
             {
@@ -553,7 +703,7 @@ bool KOMAHUB::ISNewNumber(const char *dev, const char *name, double values[], ch
 {
     if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
     {
-        for (unsigned int p = 0; p < numPorts; p++)
+        for (unsigned int p = 0; p < numPorts; ++p)
         {
             if (!strcmp(Ports[p].DutyCycleNP.name, name))
             {
@@ -593,7 +743,7 @@ bool KOMAHUB::ISNewSwitch(const char *dev, const char *name, ISState *states, ch
 {
     if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
     {
-        for (unsigned int p = 0; p < numPorts; p++)
+        for (unsigned int p = 0; p < numPorts; ++p)
         {
             if (!strcmp(Ports[p].ModeSP.name, name))
             {

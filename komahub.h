@@ -118,4 +118,33 @@ class KOMAHUB : public INDI::DefaultDevice
     } PortStruct;
 
     PortStruct Ports[numPorts]{};
+
+    // DS18B20 temperature probes, up to 4
+    unsigned int numTemperatureProbes{ 0 };
+    INumber TemperaturesN[4];
+    INumberVectorProperty TemperaturesNP;
+
+    // BME280 Pressure-Temperature-Humidity sensor
+    bool pthPresent{ false };
+    INumber HumidityN;
+    INumberVectorProperty HumidityNP;
+
+    INumber PressureN;
+    INumberVectorProperty PressureNP;
+
+    INumber TemperatureN;
+    INumberVectorProperty TemperatureNP;
+
+    INumber DewpointN;
+    INumberVectorProperty DewpointNP;
+
+    // TSL237 sky quality sensor
+    bool skyqualityPresent{ false };
+    INumber SkyQualityN[2]; // Quality and raw frequency
+    INumberVectorProperty SkyQualityNP;
+
+    // MLX90614 sky temperature sensor
+    bool skytemperaturePresent{ false };
+    INumber SkyTemperatureN[2]; // Ambient and sky temperatures
+    INumberVectorProperty SkyTemperatureNP;
 };
