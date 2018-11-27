@@ -458,7 +458,7 @@ bool KOMAHUB::initProperties()
         char label[32];
 
         IUFillText(&Ports[p].NameT, "NAME", "Name", "");
-        snprintf(str, 32, "OUTPUTNAME_%d", p);
+        snprintf(str, 32, "OUTPUT_NAME_%d", p);
         snprintf(label, 32, "Output %d name", p + 1);
         IUFillTextVector(&Ports[p].NameTP, &Ports[p].NameT, 1, getDeviceName(), str, label, OPTIONS_TAB, IP_RW, 60,
                          IPS_IDLE);
@@ -466,7 +466,7 @@ bool KOMAHUB::initProperties()
         IUFillSwitch(&Ports[p].EnableS[0], "OFF", "Off", ISS_OFF);
         IUFillSwitch(&Ports[p].EnableS[1], "ON", "On", ISS_OFF);
         IUFillSwitch(&Ports[p].EnableS[2], "RESETFUSE", "Reset fuse", ISS_OFF);
-        snprintf(str, 32, "OUTPUTENABLE_%d", p);
+        snprintf(str, 32, "OUTPUT_ENABLE_%d", p);
         snprintf(label, 32, "Output %d enable", p + 1);
         IUFillSwitchVector(&Ports[p].EnableSP, Ports[p].EnableS, 3, getDeviceName(), str, label, MAIN_CONTROL_TAB,
                            IP_RW, ISR_ATMOST1, 0, IPS_IDLE);
@@ -474,25 +474,25 @@ bool KOMAHUB::initProperties()
         IUFillSwitch(&Ports[p].ModeS[0], "OFF", "Off", ISS_OFF);
         IUFillSwitch(&Ports[p].ModeS[1], "DC", "DC", ISS_OFF);
         IUFillSwitch(&Ports[p].ModeS[2], "PWM", "PWM", ISS_OFF);
-        snprintf(str, 32, "OUTPUTMODE_%d", p);
+        snprintf(str, 32, "OUTPUT_MODE_%d", p);
         snprintf(label, 32, "Output %d mode", p + 1);
         IUFillSwitchVector(&Ports[p].ModeSP, Ports[p].ModeS, 3, getDeviceName(), str, label, OPTIONS_TAB, IP_RW,
                            ISR_ATMOST1, 0, IPS_IDLE);
 
         IUFillNumber(&Ports[p].FuseN, "VALUE", "A", "%3.0f", 0.0, 10.0, 0.1, 0.0);
-        snprintf(str, 32, "OUTPUTFUSE_%d", p);
+        snprintf(str, 32, "OUTPUT_FUSE_%d", p);
         snprintf(label, 32, "Output %d fuse", p + 1);
         IUFillNumberVector(&Ports[p].FuseNP, &Ports[p].FuseN, 1, getDeviceName(), str, label, OPTIONS_TAB, IP_RW, 60,
                            IPS_IDLE);
 
         IUFillNumber(&Ports[p].CurrentN, "VALUE", "A", "%2.1f", 0.0, 15.0, 1.0, 0.0);
-        snprintf(str, 32, "OUTPUTCURRENT_%d", p);
+        snprintf(str, 32, "OUTPUT_CURRENT_%d", p);
         snprintf(label, 32, "Output %d current", p + 1);
         IUFillNumberVector(&Ports[p].CurrentNP, &Ports[p].CurrentN, 1, getDeviceName(), str, label, MAIN_CONTROL_TAB,
                            IP_RO, 60, IPS_IDLE);
 
         IUFillNumber(&Ports[p].DutyCycleN, "POWER", "%", "%3.0f", 0.0, 100.0, 1.0, 0.0);
-        snprintf(str, 32, "OUTPUTPWM_%d", p);
+        snprintf(str, 32, "OUTPUT_PWM_%d", p);
         snprintf(label, 32, "Output %d PWM", p + 1);
         IUFillNumberVector(&Ports[p].DutyCycleNP, &Ports[p].DutyCycleN, 1, getDeviceName(), str, label,
                            MAIN_CONTROL_TAB, IP_RW, 60, IPS_IDLE);
