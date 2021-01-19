@@ -557,17 +557,17 @@ bool KOMAHUB::updateProperties()
         readOutputSettings();
         readStatus();
 
-        defineText(&VersionsTP);
-        defineNumber(&InputVoltageNP);
+        defineProperty(&VersionsTP);
+        defineProperty(&InputVoltageNP);
 
         for (unsigned int p = 0; p < numPorts; ++p)
         {
-            defineText(&Ports[p].NameTP);
-            defineSwitch(&Ports[p].EnableSP);
-            defineSwitch(&Ports[p].ModeSP);
-            defineNumber(&Ports[p].FuseNP);
-            defineNumber(&Ports[p].DutyCycleNP);
-            defineNumber(&Ports[p].CurrentNP);
+            defineProperty(&Ports[p].NameTP);
+            defineProperty(&Ports[p].EnableSP);
+            defineProperty(&Ports[p].ModeSP);
+            defineProperty(&Ports[p].FuseNP);
+            defineProperty(&Ports[p].DutyCycleNP);
+            defineProperty(&Ports[p].CurrentNP);
         }
 
         // Configure sensors according to status
@@ -577,30 +577,30 @@ bool KOMAHUB::updateProperties()
             IUFillNumberVector(&TemperaturesNP, TemperaturesN, numTemperatureProbes, getDeviceName(), "TEMPERATURES",
                                "Temperatures", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
-            defineNumber(&TemperaturesNP);
+            defineProperty(&TemperaturesNP);
         }
 
         // BM280 pressure-temperature-humidity sensor
         if (pthPresent)
         {
-            defineNumber(&PressureNP);
-            defineNumber(&HumidityNP);
-            defineNumber(&TemperatureNP);
-            defineNumber(&DewpointNP);
+            defineProperty(&PressureNP);
+            defineProperty(&HumidityNP);
+            defineProperty(&TemperatureNP);
+            defineProperty(&DewpointNP);
         }
 
         // TSL237 sky quality sensor
         if (skyqualityPresent)
         {
-            defineNumber(&SkyQualityNP);
+            defineProperty(&SkyQualityNP);
         }
 
         // PLX90614 sky temperature sensor
         if (skytemperaturePresent)
         {
-            defineNumber(&SkyTemperatureNP);
+            defineProperty(&SkyTemperatureNP);
         }
-        SetTimer(POLLMS);
+        SetTimer(getCurrentPollingPeriod());
     }
     else
     {
@@ -661,7 +661,7 @@ void KOMAHUB::TimerHit()
 
     readStatus();
 
-    SetTimer(POLLMS);
+    SetTimer(getCurrentPollingPeriod());
 }
 
 bool KOMAHUB::ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n)
