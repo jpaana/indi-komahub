@@ -200,7 +200,7 @@ bool KOMAHUB::readStatus()
         SkyQualityNP[0].setValue(status.skyquality / 10);
         SkyQualityNP[1].setValue(status.skyqualityfreq / 10);
         SkyQualityNP.setState(IPS_OK);
-        IDSetNumber(&SkyQualityNP, nullptr);
+        SkyQualityNP.apply();
     }
 
     if (skytemperaturePresent)
@@ -650,7 +650,7 @@ bool KOMAHUB::ISNewSwitch(const char *dev, const char *name, ISState *states, ch
         if (Ports[p].ModeSP.isNameMatch(name))
         {
             Ports[p].ModeSP.update(states, names, n);
-            int mode = IUFindOnSwitchIndex(&Ports[p].ModeSP);
+            int mode = Ports[p].ModeSP.findOnSwitchIndex();
             if (mode >= OUTPUT_OFF && mode <= OUTPUT_PWM)
             {
                 Ports[p].settings.type = static_cast<unsigned char>(mode);
