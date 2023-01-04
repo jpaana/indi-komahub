@@ -1,7 +1,7 @@
 /*
  KomaHub driver
 
- Copyright 2018 Jarno Paananen
+ Copyright 2018-2023 Jarno Paananen
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -24,127 +24,99 @@
 #include <defaultdevice.h>
 #include <hidapi.h>
 
-using namespace std;
+#include "indipropertyswitch.h"
+#include "indipropertynumber.h"
+#include "indipropertytext.h"
 
 class KOMAHUB : public INDI::DefaultDevice
 {
-  public:
-    KOMAHUB(hid_device *device);
-    virtual ~KOMAHUB();
+    public:
+        KOMAHUB(hid_device *device, const char* name);
+        virtual ~KOMAHUB();
 
-    const char *getDefaultName();
+        const char *getDefaultName();
 
-    virtual bool Connect() override;
-    virtual bool Disconnect() override;
+        virtual bool Connect() override;
+        virtual bool Disconnect() override;
 
-    virtual bool initProperties();
-    virtual bool updateProperties();
+        virtual bool initProperties();
+        virtual bool updateProperties();
 
-    virtual void ISGetProperties(const char *dev);
-    virtual bool ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n) override;
-    virtual bool ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n) override;
-    virtual bool ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n) override;
+        virtual void ISGetProperties(const char *dev);
+        virtual bool ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n) override;
+        virtual bool ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n) override;
+        virtual bool ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n) override;
 
-    // http://pid.codes/1209/4242/
-    static const unsigned short vendorID  = 0x1209;
-    static const unsigned short productID = 0x4242;
+        // http://pid.codes/1209/4242/
+        static const unsigned short vendorID  = 0x1209;
+        static const unsigned short productID = 0x4242;
 
-    static const unsigned int numPorts = 6;
+        static const unsigned int numPorts = 6;
 
-  protected:
-    void TimerHit();
+    protected:
+        void TimerHit();
 
-  private:
-    hid_device *device;
+    private:
+        hid_device *device;
 
-    char name[32];
+        char name[32];
 
-    friend void ::ISGetProperties(const char *dev);
-    friend void ::ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int num);
-    friend void ::ISNewText(const char *dev, const char *name, char *texts[], char *names[], int num);
-    friend void ::ISNewNumber(const char *dev, const char *name, double values[], char *names[], int num);
-    friend void ::ISNewBLOB(const char *dev, const char *name, int sizes[], int blobsizes[], char *blobs[],
-                            char *formats[], char *names[], int n);
+        static const unsigned char magic = 'K';
 
-    static const unsigned char magic = 'K';
-
-    enum OutputType
-    {
-        OUTPUT_OFF = 0,
-        OUTPUT_DC  = 1,
-        OUTPUT_PWM = 2,
-        //            OUTPUT_PWM_PID_HEAT = 3,
-        //            OUTPUT_PWM_PID_COOL = 4,
-        //            OUTPUT_PWM_FAST     = 5
-    };
+        enum OutputType
+        {
+            OUTPUT_OFF = 0,
+            OUTPUT_DC  = 1,
+            OUTPUT_PWM = 2,
+            // OUTPUT_PWM_PID_HEAT = 3,
+            // OUTPUT_PWM_PID_COOL = 4,
+            // OUTPUT_PWM_FAST     = 5
+        };
 
 #include "USBCommands.h"
 
-    bool readFactorySettings();
-    bool readStatus();
-    bool readOutputSettings();
-    bool configureOutput(unsigned char output);
-    bool setPwmDuty(unsigned char output, unsigned char duty);
-    bool setRelay(unsigned char output, bool enabled);
-    bool resetFuse(unsigned char output);
+        bool readFactorySettings();
+        bool readStatus();
+        bool readOutputSettings();
+        bool configureOutput(unsigned char output);
+        bool setPwmDuty(unsigned char output, unsigned char duty);
+        bool setRelay(unsigned char output, bool enabled);
+        bool resetFuse(unsigned char output);
 
-    IText VersionsT[3]{};
-    ITextVectorProperty VersionsTP;
+        INDI::PropertyText VersionsTP{3};
 
-    INumber InputVoltageN;
-    INumberVectorProperty InputVoltageNP;
+        INDI::PropertyNumber InputVoltageNP{1};
 
-    typedef struct
-    {
-        GetOutputSettingsResponse settings;
+        typedef struct
+        {
+            GetOutputSettingsResponse settings;
 
-        IText NameT;
-        ITextVectorProperty NameTP;
+            INDI::PropertyText NameTP{1};
+            INDI::PropertySwitch EnableSP{3};
+            INDI::PropertySwitch ModeSP{3};
+            INDI::PropertyNumber FuseNP{1};
+            INDI::PropertyNumber DutyCycleNP{1};
+            INDI::PropertyNumber CurrentNP{1};
+        } PortStruct;
 
-        ISwitch EnableS[3];
-        ISwitchVectorProperty EnableSP;
+        PortStruct Ports[numPorts] {};
 
-        ISwitch ModeS[3];
-        ISwitchVectorProperty ModeSP;
+        // DS18B20 temperature probes, up to 4
+        unsigned int numTemperatureProbes{ 0 };
+        INDI::PropertyNumber TemperaturesNP{4};
 
-        INumber FuseN;
-        INumberVectorProperty FuseNP;
+        // BME280 Pressure-Temperature-Humidity sensor
+        bool pthPresent{ false };
+        INDI::PropertyNumber HumidityNP{1};
+        INDI::PropertyNumber PressureNP{1};
+        INDI::PropertyNumber TemperatureNP{1};
+        INDI::PropertyNumber DewpointNP{1};
 
-        INumber DutyCycleN;
-        INumberVectorProperty DutyCycleNP;
+        // TSL237 sky quality sensor
+        bool skyqualityPresent{ false };
+        INDI::PropertyNumber SkyQualityNP{2}; // Quality and raw frequency
 
-        INumber CurrentN;
-        INumberVectorProperty CurrentNP;
-    } PortStruct;
-
-    PortStruct Ports[numPorts]{};
-
-    // DS18B20 temperature probes, up to 4
-    unsigned int numTemperatureProbes{ 0 };
-    INumber TemperaturesN[4];
-    INumberVectorProperty TemperaturesNP;
-
-    // BME280 Pressure-Temperature-Humidity sensor
-    bool pthPresent{ false };
-    INumber HumidityN;
-    INumberVectorProperty HumidityNP;
-
-    INumber PressureN;
-    INumberVectorProperty PressureNP;
-
-    INumber TemperatureN;
-    INumberVectorProperty TemperatureNP;
-
-    INumber DewpointN;
-    INumberVectorProperty DewpointNP;
-
-    // TSL237 sky quality sensor
-    bool skyqualityPresent{ false };
-    INumber SkyQualityN[2]; // Quality and raw frequency
-    INumberVectorProperty SkyQualityNP;
-
-    // MLX90614 sky temperature sensor
-    bool skytemperaturePresent{ false };
-    INumber SkyTemperatureN[2]; // Ambient and sky temperatures
-    INumberVectorProperty SkyTemperatureNP;
+        // MLX90614 sky temperature sensor
+        bool skytemperaturePresent{ false };
+        INDI::PropertyNumber SkyTemperatureNP{2}; // Ambient and sky temperatures
 };

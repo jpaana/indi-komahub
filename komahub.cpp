@@ -1,7 +1,7 @@
 /*
  KomaHub INDI driver
 
- Copyright 2018 Jarno Paananen
+ Copyright 2018-2023 Jarno Paananen
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -20,140 +20,46 @@
 
 #include <memory>
 #include <cstring>
+#include <deque>
 
 #include "config.h"
 
 #include "komahub.h"
 
-#define MAX_DEVICES 4 /* Max device hubCount */
-
-static int hubCount;
-static KOMAHUB *hubs[MAX_DEVICES];
-
-static void cleanup()
+static class Loader
 {
-    for (int i = 0; i < hubCount; ++i)
-    {
-        delete hubs[i];
-    }
-}
-
-void ISInit()
-{
-    static bool isInit = false;
-
-    if (!isInit)
-    {
-        hid_device_info *devices = hid_enumerate(KOMAHUB::vendorID, KOMAHUB::productID);
-        hubCount                 = 0;
-
-        hid_device_info *current = devices;
-        while (current)
+        std::deque<std::unique_ptr<KOMAHUB>> hubs;
+    public:
+        Loader()
         {
-            // The hub shows up as to interfaces, only use 0
-            if (current->interface_number == 0)
+            hid_device_info *devices = hid_enumerate(KOMAHUB::vendorID, KOMAHUB::productID);
+            int hubCount = 0;
+
+            hid_device_info *current = devices;
+            while (current)
             {
-                hid_device *dev = hid_open_path(current->path);
-                if (dev)
+                // The hub shows up as to interfaces, only use 0
+                if (current->interface_number == 0)
                 {
-                    hubs[hubCount++] = new KOMAHUB(dev);
+                    hid_device *dev = hid_open_path(current->path);
+                    if (dev)
+                    {
+                        std::string name = "KomaHub";
+                        hubCount++;
+                        if (hubCount > 1)
+                            name += " " + std::to_string(hubCount);
+                        hubs.push_back(std::unique_ptr<KOMAHUB>(new KOMAHUB(dev, name.c_str())));
+                    }
                 }
+                current = current->next;
             }
-            current = current->next;
+            hid_free_enumeration(devices);
         }
-        hid_free_enumeration(devices);
-        atexit(cleanup);
-        isInit = true;
-    }
-}
+} loader;
 
-void ISGetProperties(const char *dev)
-{
-    ISInit();
-    for (int i = 0; i < hubCount; ++i)
-    {
-        KOMAHUB *hub = hubs[i];
-        if (dev == NULL || !strcmp(dev, hub->name))
-        {
-            hub->ISGetProperties(dev);
-            if (dev != NULL)
-                break;
-        }
-    }
-}
-
-void ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int num)
-{
-    ISInit();
-    for (int i = 0; i < hubCount; ++i)
-    {
-        KOMAHUB *hub = hubs[i];
-        if (dev == NULL || !strcmp(dev, hub->name))
-        {
-            hub->ISNewSwitch(dev, name, states, names, num);
-            if (dev != NULL)
-                break;
-        }
-    }
-}
-
-void ISNewText(const char *dev, const char *name, char *texts[], char *names[], int num)
-{
-    ISInit();
-    for (int i = 0; i < hubCount; ++i)
-    {
-        KOMAHUB *hub = hubs[i];
-        if (dev == NULL || !strcmp(dev, hub->name))
-        {
-            hub->ISNewText(dev, name, texts, names, num);
-            if (dev != NULL)
-                break;
-        }
-    }
-}
-
-void ISNewNumber(const char *dev, const char *name, double values[], char *names[], int num)
-{
-    ISInit();
-    for (int i = 0; i < hubCount; ++i)
-    {
-        KOMAHUB *hub = hubs[i];
-        if (dev == NULL || !strcmp(dev, hub->name))
-        {
-            hub->ISNewNumber(dev, name, values, names, num);
-            if (dev != NULL)
-                break;
-        }
-    }
-}
-
-void ISNewBLOB(const char *dev, const char *name, int sizes[], int blobsizes[], char *blobs[], char *formats[],
-               char *names[], int n)
-{
-    INDI_UNUSED(dev);
-    INDI_UNUSED(name);
-    INDI_UNUSED(sizes);
-    INDI_UNUSED(blobsizes);
-    INDI_UNUSED(blobs);
-    INDI_UNUSED(formats);
-    INDI_UNUSED(names);
-    INDI_UNUSED(n);
-}
-void ISSnoopDevice(XMLEle *root)
-{
-    ISInit();
-
-    for (int i = 0; i < hubCount; ++i)
-    {
-        KOMAHUB *hub = hubs[i];
-        hub->ISSnoopDevice(root);
-    }
-}
-
-KOMAHUB::KOMAHUB(hid_device *device)
+KOMAHUB::KOMAHUB(hid_device *device, const char* name)
 {
     this->device     = device;
-    const char *name = "KomaHub";
     snprintf(this->name, 32, "%s", name);
     setDeviceName(this->name);
 
@@ -196,16 +102,16 @@ bool KOMAHUB::readFactorySettings()
 
     char str[32];
     snprintf(str, 32, "%d.%d", settings.boardRevision >> 4, settings.boardRevision & 0xf);
-    IUSaveText(&VersionsT[0], str);
+    VersionsTP[0].setText(str);
 
     snprintf(str, 32, "%d.%d", settings.firmwareVersion >> 8, settings.firmwareVersion & 0xff);
-    IUSaveText(&VersionsT[1], str);
+    VersionsTP[1].setText(str);
 
     snprintf(str, 32, "%d", settings.serialNumber);
-    IUSaveText(&VersionsT[2], str);
+    VersionsTP[2].setText(str);
 
-    VersionsTP.s = IPS_OK;
-    IDSetText(&VersionsTP, nullptr);
+    VersionsTP.setState(IPS_OK);
+    VersionsTP.apply();
     return true;
 }
 
@@ -233,26 +139,26 @@ bool KOMAHUB::readStatus()
         return false;
     }
 
-    InputVoltageN.value = status.inputVoltage / 10.0;
-    InputVoltageNP.s    = (InputVoltageN.value > 11.0 && InputVoltageN.value < 14) ? IPS_OK : IPS_ALERT;
-    IDSetNumber(&InputVoltageNP, nullptr);
+    InputVoltageNP[0].setValue(status.inputVoltage / 10.0);
+    InputVoltageNP.setState((InputVoltageNP[0].getValue() > 11.0 && InputVoltageNP[0].getValue() < 14) ? IPS_OK : IPS_ALERT);
+    InputVoltageNP.apply();
 
     for (unsigned int p = 0; p < numPorts; ++p)
     {
-        Ports[p].CurrentN.value = status.outputPower[p] / 10.0;
-        Ports[p].CurrentNP.s =
-            (status.fuseIsBlownBits >> p) & 1 ? IPS_ALERT : Ports[p].ModeS[0].s == ISS_ON ? IPS_IDLE : IPS_OK;
-        IDSetNumber(&Ports[p].CurrentNP, nullptr);
+        Ports[p].CurrentNP[0].setValue(status.outputPower[p] / 10.0);
+        Ports[p].CurrentNP.setState((status.fuseIsBlownBits >> p) & 1 ? IPS_ALERT : Ports[p].ModeSP[0].getState() == ISS_ON ?
+                                    IPS_IDLE : IPS_OK);
+        Ports[p].CurrentNP.apply();
 
-        Ports[p].DutyCycleN.value = status.pwmPercentages[p];
-        Ports[p].DutyCycleNP.s    = Ports[p].ModeS[2].s == ISS_ON ? IPS_OK : IPS_IDLE;
-        IDSetNumber(&Ports[p].DutyCycleNP, nullptr);
+        Ports[p].DutyCycleNP[0].setValue(status.pwmPercentages[p]);
+        Ports[p].DutyCycleNP.setState(Ports[p].ModeSP[2].getState() == ISS_ON ? IPS_OK : IPS_IDLE);
+        Ports[p].DutyCycleNP.apply();
 
-        IUResetSwitch(&Ports[p].EnableSP);
-        Ports[p].EnableS[(status.relayIsOpenBits >> p) & 1].s = ISS_ON;
-        Ports[p].EnableSP.s =
-            (status.fuseIsBlownBits >> p) & 1 ? IPS_ALERT : (status.relayIsOpenBits >> p) & 1 ? IPS_OK : IPS_IDLE;
-        IDSetSwitch(&Ports[p].EnableSP, nullptr);
+        Ports[p].EnableSP.reset();
+        Ports[p].EnableSP[(status.relayIsOpenBits >> p) & 1].setState(ISS_ON);
+        Ports[p].EnableSP.setState((status.fuseIsBlownBits >> p) & 1 ? IPS_ALERT : (status.relayIsOpenBits >> p) & 1 ? IPS_OK :
+                                   IPS_IDLE);
+        Ports[p].EnableSP.apply();
     }
 
     numTemperatureProbes  = status.numberOfTemperatureProbes;
@@ -264,49 +170,45 @@ bool KOMAHUB::readStatus()
     {
         for (unsigned t = 0; t < numTemperatureProbes; ++t)
         {
-            TemperaturesN[t].value = status.temperatureProbes[t] / 10;
+            TemperaturesNP[t].setValue(status.temperatureProbes[t] / 10);
         }
-        // Check if haven't initialized the property yet
-        if (TemperaturesNP.s == IPS_OK)
-        {
-            IDSetNumber(&TemperaturesNP, nullptr);
-        }
-        TemperaturesNP.s = IPS_OK;
+        TemperaturesNP.setState(IPS_OK);
+        TemperaturesNP.apply();
     }
 
     if (pthPresent)
     {
-        TemperatureN.value = status.temperature / 10;
-        TemperatureNP.s    = IPS_OK;
-        IDSetNumber(&TemperatureNP, nullptr);
+        TemperatureNP[0].setValue(status.temperature / 10);
+        TemperatureNP.setState(IPS_OK);
+        TemperatureNP.apply();
 
-        HumidityN.value = status.humidity;
-        HumidityNP.s    = IPS_OK;
-        IDSetNumber(&HumidityNP, nullptr);
+        HumidityNP[0].setValue(status.humidity);
+        HumidityNP.setState(IPS_OK);
+        HumidityNP.apply();
 
-        PressureN.value = status.pressure / 10;
-        PressureNP.s    = IPS_OK;
-        IDSetNumber(&PressureNP, nullptr);
+        PressureNP[0].setValue(status.pressure / 10);
+        PressureNP.setState(IPS_OK);
+        PressureNP.apply();
 
-        DewpointN.value = status.dewpoint / 10;
-        DewpointNP.s    = IPS_OK;
-        IDSetNumber(&DewpointNP, nullptr);
+        DewpointNP[0].setValue(status.dewpoint / 10);
+        DewpointNP.setState(IPS_OK);
+        DewpointNP.apply();
     }
 
     if (skyqualityPresent)
     {
-        SkyQualityN[0].value = status.skyquality / 10;
-        SkyQualityN[1].value = status.skyqualityfreq / 10;
-        SkyQualityNP.s       = IPS_OK;
+        SkyQualityNP[0].setValue(status.skyquality / 10);
+        SkyQualityNP[1].setValue(status.skyqualityfreq / 10);
+        SkyQualityNP.setState(IPS_OK);
         IDSetNumber(&SkyQualityNP, nullptr);
     }
 
     if (skytemperaturePresent)
     {
-        SkyTemperatureN[0].value = status.skytemperature / 10;
-        SkyTemperatureN[1].value = status.skyambienttemperature / 10;
-        SkyTemperatureNP.s       = IPS_OK;
-        IDSetNumber(&SkyTemperatureNP, nullptr);
+        SkyTemperatureNP[0].setValue(status.skytemperature / 10);
+        SkyTemperatureNP[1].setValue(status.skyambienttemperature / 10);
+        SkyTemperatureNP.setState(IPS_OK);
+        SkyTemperatureNP.apply();
     }
     return true;
 }
@@ -338,31 +240,40 @@ bool KOMAHUB::readOutputSettings()
             return false;
         }
 
-        snprintf(Ports[p].EnableSP.label, MAXINDILABEL, "%s enable", status->name);
-        IDSetSwitch(&Ports[p].EnableSP, nullptr);
+        char str[MAXINDILABEL];
+        snprintf(str, MAXINDILABEL, "%s enable", status->name);
+        Ports[p].EnableSP.setLabel(str);
+        Ports[p].EnableSP.apply();
 
-        snprintf(Ports[p].FuseNP.label, MAXINDILABEL, "%s fuse", status->name);
-        snprintf(Ports[p].ModeSP.label, MAXINDILABEL, "%s type", status->name);
+        snprintf(str, MAXINDILABEL, "%s fuse", status->name);
+        Ports[p].FuseNP.setLabel(str);
+        Ports[p].FuseNP.apply();
+        snprintf(str, MAXINDILABEL, "%s type", status->name);
+        Ports[p].ModeSP.setLabel(str);
+        Ports[p].ModeSP.apply();
 
-        snprintf(Ports[p].CurrentNP.label, MAXINDILABEL, "%s current", status->name);
-        IDSetNumber(&Ports[p].CurrentNP, nullptr);
-        snprintf(Ports[p].DutyCycleNP.label, MAXINDILABEL, "%s PWM", status->name);
-        IDSetNumber(&Ports[p].DutyCycleNP, nullptr);
+        snprintf(str, MAXINDILABEL, "%s current", status->name);
+        Ports[p].CurrentNP.setLabel(str);
+        Ports[p].CurrentNP.apply();
 
-        IUSaveText(&Ports[p].NameT, status->name);
-        Ports[p].NameTP.s = IPS_OK;
-        IDSetText(&Ports[p].NameTP, nullptr);
+        snprintf(str, MAXINDILABEL, "%s PWM", status->name);
+        Ports[p].DutyCycleNP.setLabel(str);
+        Ports[p].DutyCycleNP.apply();
 
-        Ports[p].FuseN.value = status->fuseCurrent / 10.0;
-        Ports[p].FuseNP.s    = IPS_OK;
-        IDSetNumber(&Ports[p].FuseNP, nullptr);
+        Ports[p].NameTP[0].setText(status->name);
+        Ports[p].NameTP.setState(IPS_OK);
+        Ports[p].NameTP.apply();
+
+        Ports[p].FuseNP[0].setValue(status->fuseCurrent / 10.0);
+        Ports[p].FuseNP.setState(IPS_OK);
+        Ports[p].FuseNP.apply();
 
         if (status->type <= OUTPUT_PWM)
         {
-            IUResetSwitch(&Ports[p].ModeSP);
-            Ports[p].ModeS[status->type].s = ISS_ON;
-            Ports[p].ModeSP.s              = IPS_OK;
-            IDSetSwitch(&Ports[p].ModeSP, nullptr);
+            Ports[p].ModeSP.reset();
+            Ports[p].ModeSP[status->type].setState(ISS_ON);
+            Ports[p].ModeSP.setState(IPS_OK);
+            Ports[p].ModeSP.apply();
         }
     }
 
@@ -443,59 +354,53 @@ bool KOMAHUB::initProperties()
     setDefaultPollingPeriod(10000);
     addPollPeriodControl();
 
-    IUFillText(&VersionsT[0], "BOARD", "Board", "");
-    IUFillText(&VersionsT[1], "FIRMWARE", "Firmware", "");
-    IUFillText(&VersionsT[2], "SERIAL", "Serial", "");
-    IUFillTextVector(&VersionsTP, VersionsT, 3, getDeviceName(), "VERSIONS", "Versions", INFO_TAB, IP_RO, 60, IPS_IDLE);
+    VersionsTP[0].fill("BOARD", "Board", "");
+    VersionsTP[1].fill("FIRMWARE", "Firmware", "");
+    VersionsTP[2].fill("SERIAL", "Serial", "");
+    VersionsTP.fill(getDeviceName(), "VERSIONS", "Versions", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
-    IUFillNumber(&InputVoltageN, "VALUE", "V", "%2.1f", 0.0, 15.0, 1.0, 0.0);
-    IUFillNumberVector(&InputVoltageNP, &InputVoltageN, 1, getDeviceName(), "INPUT_VOLTAGE", "Input voltage",
-                       MAIN_CONTROL_TAB, IP_RO, 60, IPS_IDLE);
+    InputVoltageNP[0].fill("VALUE", "V", "%2.1f", 0.0, 15.0, 1.0, 0.0);
+    InputVoltageNP.fill(getDeviceName(), "INPUT_VOLTAGE", "Input voltage",
+                        MAIN_CONTROL_TAB, IP_RO, 60, IPS_IDLE);
 
     for (unsigned int p = 0; p < numPorts; ++p)
     {
         char str[32];
         char label[32];
 
-        IUFillText(&Ports[p].NameT, "NAME", "Name", "");
+        Ports[p].NameTP[0].fill("NAME", "Name", "");
         snprintf(str, 32, "OUTPUT_NAME_%d", p);
         snprintf(label, 32, "Output %d name", p + 1);
-        IUFillTextVector(&Ports[p].NameTP, &Ports[p].NameT, 1, getDeviceName(), str, label, OPTIONS_TAB, IP_RW, 60,
-                         IPS_IDLE);
+        Ports[p].NameTP.fill(getDeviceName(), str, label, OPTIONS_TAB, IP_RW, 60, IPS_IDLE);
 
-        IUFillSwitch(&Ports[p].EnableS[0], "OFF", "Off", ISS_OFF);
-        IUFillSwitch(&Ports[p].EnableS[1], "ON", "On", ISS_OFF);
-        IUFillSwitch(&Ports[p].EnableS[2], "RESETFUSE", "Reset fuse", ISS_OFF);
+        Ports[p].EnableSP[0].fill("OFF", "Off", ISS_OFF);
+        Ports[p].EnableSP[1].fill("ON", "On", ISS_OFF);
+        Ports[p].EnableSP[2].fill("RESETFUSE", "Reset fuse", ISS_OFF);
         snprintf(str, 32, "OUTPUT_ENABLE_%d", p);
         snprintf(label, 32, "Output %d enable", p + 1);
-        IUFillSwitchVector(&Ports[p].EnableSP, Ports[p].EnableS, 3, getDeviceName(), str, label, MAIN_CONTROL_TAB,
-                           IP_RW, ISR_ATMOST1, 0, IPS_IDLE);
+        Ports[p].EnableSP.fill(getDeviceName(), str, label, MAIN_CONTROL_TAB, IP_RW, ISR_ATMOST1, 0, IPS_IDLE);
 
-        IUFillSwitch(&Ports[p].ModeS[0], "OFF", "Off", ISS_OFF);
-        IUFillSwitch(&Ports[p].ModeS[1], "DC", "DC", ISS_OFF);
-        IUFillSwitch(&Ports[p].ModeS[2], "PWM", "PWM", ISS_OFF);
+        Ports[p].ModeSP[0].fill("OFF", "Off", ISS_OFF);
+        Ports[p].ModeSP[1].fill("DC", "DC", ISS_OFF);
+        Ports[p].ModeSP[2].fill("PWM", "PWM", ISS_OFF);
         snprintf(str, 32, "OUTPUT_MODE_%d", p);
         snprintf(label, 32, "Output %d mode", p + 1);
-        IUFillSwitchVector(&Ports[p].ModeSP, Ports[p].ModeS, 3, getDeviceName(), str, label, OPTIONS_TAB, IP_RW,
-                           ISR_ATMOST1, 0, IPS_IDLE);
+        Ports[p].ModeSP.fill(getDeviceName(), str, label, OPTIONS_TAB, IP_RW, ISR_ATMOST1, 0, IPS_IDLE);
 
-        IUFillNumber(&Ports[p].FuseN, "VALUE", "A", "%3.0f", 0.0, 10.0, 0.1, 0.0);
+        Ports[p].FuseNP[0].fill("VALUE", "A", "%3.0f", 0.0, 10.0, 0.1, 0.0);
         snprintf(str, 32, "OUTPUT_FUSE_%d", p);
         snprintf(label, 32, "Output %d fuse", p + 1);
-        IUFillNumberVector(&Ports[p].FuseNP, &Ports[p].FuseN, 1, getDeviceName(), str, label, OPTIONS_TAB, IP_RW, 60,
-                           IPS_IDLE);
+        Ports[p].FuseNP.fill(getDeviceName(), str, label, OPTIONS_TAB, IP_RW, 60, IPS_IDLE);
 
-        IUFillNumber(&Ports[p].CurrentN, "VALUE", "A", "%2.1f", 0.0, 15.0, 1.0, 0.0);
+        Ports[p].CurrentNP[0].fill("VALUE", "A", "%2.1f", 0.0, 15.0, 1.0, 0.0);
         snprintf(str, 32, "OUTPUT_CURRENT_%d", p);
         snprintf(label, 32, "Output %d current", p + 1);
-        IUFillNumberVector(&Ports[p].CurrentNP, &Ports[p].CurrentN, 1, getDeviceName(), str, label, MAIN_CONTROL_TAB,
-                           IP_RO, 60, IPS_IDLE);
+        Ports[p].CurrentNP.fill(getDeviceName(), str, label, MAIN_CONTROL_TAB, IP_RO, 60, IPS_IDLE);
 
-        IUFillNumber(&Ports[p].DutyCycleN, "POWER", "%", "%3.0f", 0.0, 100.0, 1.0, 0.0);
+        Ports[p].DutyCycleNP[0].fill("POWER", "%", "%3.0f", 0.0, 100.0, 1.0, 0.0);
         snprintf(str, 32, "OUTPUT_PWM_%d", p);
         snprintf(label, 32, "Output %d PWM", p + 1);
-        IUFillNumberVector(&Ports[p].DutyCycleNP, &Ports[p].DutyCycleN, 1, getDeviceName(), str, label,
-                           MAIN_CONTROL_TAB, IP_RW, 60, IPS_IDLE);
+        Ports[p].DutyCycleNP.fill(getDeviceName(), str, label, MAIN_CONTROL_TAB, IP_RW, 60, IPS_IDLE);
     }
 
     // DS18B20 probes, vector initialized later
@@ -506,38 +411,31 @@ bool KOMAHUB::initProperties()
 
         snprintf(str, 32, "TEMP_%d", t);
         snprintf(label, 32, "Temperature %d", t + 1);
-        IUFillNumber(&TemperaturesN[t], str, label, "%3.2f", -100.0, 100.0, 0, 0.0);
+        TemperaturesNP[t].fill(str, label, "%3.2f", -100.0, 100.0, 0, 0.0);
     }
 
     // BME280
-    IUFillNumber(&HumidityN, "VALUE", "%", "%3.0f", 0, 100, 0, 0);
-    IUFillNumberVector(&HumidityNP, &HumidityN, 1, getDeviceName(), "HUMIDITY", "Humidity", INFO_TAB, IP_RO, 60,
-                       IPS_IDLE);
+    HumidityNP[0].fill("VALUE", "%", "%3.0f", 0, 100, 0, 0);
+    HumidityNP.fill(getDeviceName(), "HUMIDITY", "Humidity", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
-    IUFillNumber(&PressureN, "VALUE", "hPa", "%4.0f", 900, 1100, 0, 0);
-    IUFillNumberVector(&PressureNP, &PressureN, 1, getDeviceName(), "PRESSURE", "Pressure", INFO_TAB, IP_RO, 60,
-                       IPS_IDLE);
+    PressureNP[0].fill("VALUE", "hPa", "%4.0f", 900, 1100, 0, 0);
+    PressureNP.fill(getDeviceName(), "PRESSURE", "Pressure", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
-    IUFillNumber(&TemperatureN, "VALUE", "C", "%3.0f", -100, 100, 0, 0);
-    IUFillNumberVector(&TemperatureNP, &TemperatureN, 1, getDeviceName(), "TEMPERATURE", "Temperature", INFO_TAB, IP_RO,
-                       60, IPS_IDLE);
+    TemperatureNP[0].fill("VALUE", "C", "%3.0f", -100, 100, 0, 0);
+    TemperatureNP.fill(getDeviceName(), "TEMPERATURE", "Temperature", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
-    IUFillNumber(&DewpointN, "VALUE", "C", "%3.0f", -100, 100, 0, 0);
-    IUFillNumberVector(&DewpointNP, &DewpointN, 1, getDeviceName(), "DEWPOINT", "Dewpoint", INFO_TAB, IP_RO, 60,
-                       IPS_IDLE);
+    DewpointNP[0].fill("VALUE", "C", "%3.0f", -100, 100, 0, 0);
+    DewpointNP.fill(getDeviceName(), "DEWPOINT", "Dewpoint", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
     // TSL237
-    IUFillNumber(&SkyQualityN[0], "SKY_BRIGHTNESS", "Mag/Arcsec^2", "%3.2f", -20, 30, 0,
-                 0); // Property snooped by INDICCD
-    IUFillNumber(&SkyQualityN[1], "SENSOR_FREQUENCY", "Hz", "%6.2f", 0, 5000000, 0, 0);
-    IUFillNumberVector(&SkyQualityNP, SkyQualityN, 2, getDeviceName(), "SKY_QUALITY", "Sky Quality", INFO_TAB, IP_RO,
-                       60, IPS_IDLE);
+    SkyQualityNP[0].fill("SKY_BRIGHTNESS", "Mag/Arcsec^2", "%3.2f", -20, 30, 0, 0); // Property snooped by INDICCD
+    SkyQualityNP[1].fill("SENSOR_FREQUENCY", "Hz", "%6.2f", 0, 5000000, 0, 0);
+    SkyQualityNP.fill(getDeviceName(), "SKY_QUALITY", "Sky Quality", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
     // PLX90614
-    IUFillNumber(&SkyTemperatureN[0], "SKY_TEMPERATURE", "C", "%3.2f", -100, 100, 0, 0);
-    IUFillNumber(&SkyTemperatureN[1], "AMBIENT", "C", "%3.2f", -100, 100, 0, 0);
-    IUFillNumberVector(&SkyTemperatureNP, SkyTemperatureN, 2, getDeviceName(), "SKY_TEMPERATURE", "Sky Temperature",
-                       INFO_TAB, IP_RO, 60, IPS_IDLE);
+    SkyTemperatureNP[0].fill("SKY_TEMPERATURE", "C", "%3.2f", -100, 100, 0, 0);
+    SkyTemperatureNP[1].fill("AMBIENT", "C", "%3.2f", -100, 100, 0, 0);
+    SkyTemperatureNP.fill(getDeviceName(), "SKY_TEMPERATURE", "Sky Temperature", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
     return true;
 }
@@ -557,86 +455,86 @@ bool KOMAHUB::updateProperties()
         readOutputSettings();
         readStatus();
 
-        defineProperty(&VersionsTP);
-        defineProperty(&InputVoltageNP);
+        defineProperty(VersionsTP);
+        defineProperty(InputVoltageNP);
 
         for (unsigned int p = 0; p < numPorts; ++p)
         {
-            defineProperty(&Ports[p].NameTP);
-            defineProperty(&Ports[p].EnableSP);
-            defineProperty(&Ports[p].ModeSP);
-            defineProperty(&Ports[p].FuseNP);
-            defineProperty(&Ports[p].DutyCycleNP);
-            defineProperty(&Ports[p].CurrentNP);
+            defineProperty(Ports[p].NameTP);
+            defineProperty(Ports[p].EnableSP);
+            defineProperty(Ports[p].ModeSP);
+            defineProperty(Ports[p].FuseNP);
+            defineProperty(Ports[p].DutyCycleNP);
+            defineProperty(Ports[p].CurrentNP);
         }
 
         // Configure sensors according to status
         // DS18B20 temperature probes
         if (numTemperatureProbes > 0)
         {
-            IUFillNumberVector(&TemperaturesNP, TemperaturesN, numTemperatureProbes, getDeviceName(), "TEMPERATURES",
-                               "Temperatures", INFO_TAB, IP_RO, 60, IPS_IDLE);
+            TemperaturesNP.resize(numTemperatureProbes);
+            TemperaturesNP.fill(getDeviceName(), "TEMPERATURES", "Temperatures", INFO_TAB, IP_RO, 60, IPS_IDLE);
 
-            defineProperty(&TemperaturesNP);
+            defineProperty(TemperaturesNP);
         }
 
         // BM280 pressure-temperature-humidity sensor
         if (pthPresent)
         {
-            defineProperty(&PressureNP);
-            defineProperty(&HumidityNP);
-            defineProperty(&TemperatureNP);
-            defineProperty(&DewpointNP);
+            defineProperty(PressureNP);
+            defineProperty(HumidityNP);
+            defineProperty(TemperatureNP);
+            defineProperty(DewpointNP);
         }
 
         // TSL237 sky quality sensor
         if (skyqualityPresent)
         {
-            defineProperty(&SkyQualityNP);
+            defineProperty(SkyQualityNP);
         }
 
         // PLX90614 sky temperature sensor
         if (skytemperaturePresent)
         {
-            defineProperty(&SkyTemperatureNP);
+            defineProperty(SkyTemperatureNP);
         }
         SetTimer(getCurrentPollingPeriod());
     }
     else
     {
-        deleteProperty(VersionsTP.name);
-        deleteProperty(InputVoltageNP.name);
+        deleteProperty(VersionsTP);
+        deleteProperty(InputVoltageNP);
         for (unsigned int p = 0; p < numPorts; ++p)
         {
-            deleteProperty(Ports[p].NameTP.name);
-            deleteProperty(Ports[p].EnableSP.name);
-            deleteProperty(Ports[p].ModeSP.name);
-            deleteProperty(Ports[p].FuseNP.name);
-            deleteProperty(Ports[p].DutyCycleNP.name);
-            deleteProperty(Ports[p].CurrentNP.name);
+            deleteProperty(Ports[p].NameTP);
+            deleteProperty(Ports[p].EnableSP);
+            deleteProperty(Ports[p].ModeSP);
+            deleteProperty(Ports[p].FuseNP);
+            deleteProperty(Ports[p].DutyCycleNP);
+            deleteProperty(Ports[p].CurrentNP);
         }
 
         if (numTemperatureProbes > 0)
         {
-            deleteProperty(TemperaturesNP.name);
+            deleteProperty(TemperaturesNP);
         }
         if (pthPresent)
         {
-            deleteProperty(PressureNP.name);
-            deleteProperty(HumidityNP.name);
-            deleteProperty(TemperatureNP.name);
-            deleteProperty(DewpointNP.name);
+            deleteProperty(PressureNP);
+            deleteProperty(HumidityNP);
+            deleteProperty(TemperatureNP);
+            deleteProperty(DewpointNP);
         }
         // TSL237 sky quality sensor
         if (skyqualityPresent)
         {
-            deleteProperty(SkyQualityNP.name);
+            deleteProperty(SkyQualityNP);
         }
 
         // PLX90614 sky temperature sensor
         if (skytemperaturePresent)
         {
-            deleteProperty(SkyTemperatureNP.name);
+            deleteProperty(SkyTemperatureNP);
         }
     }
     return true;
@@ -666,73 +564,74 @@ void KOMAHUB::TimerHit()
 
 bool KOMAHUB::ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n)
 {
-    if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
+    if (dev == nullptr || strcmp(dev, getDeviceName()) != 0)
     {
-        for (unsigned int p = 0; p < numPorts; ++p)
+        return false;
+    }
+    for (unsigned int p = 0; p < numPorts; ++p)
+    {
+        if (Ports[p].NameTP.isNameMatch(name))
         {
-            if (!strcmp(Ports[p].NameTP.name, name))
+            Ports[p].NameTP.update(texts, names, n);
+            if (strlen(Ports[p].NameTP[0].getText()) >= 16)
             {
-                IUUpdateText(&Ports[p].NameTP, texts, names, n);
-                if (strlen(Ports[p].NameT.text) >= 16)
-                {
-                    Ports[p].NameTP.s = IPS_ALERT;
-                    IDSetText(&Ports[p].NameTP, nullptr);
-                    LOG_ERROR("Too long port name, maximum of 15 characters supported!");
-                    return false;
-                }
-
-                strncpy(Ports[p].settings.name, Ports[p].NameT.text, sizeof(Ports[p].settings.name));
-                if (configureOutput(p))
-                {
-                    if (readOutputSettings())
-                    {
-                        Ports[p].NameTP.s = IPS_OK;
-                        IDSetText(&Ports[p].NameTP, nullptr);
-                        return true;
-                    }
-                }
+                Ports[p].NameTP.setState(IPS_ALERT);
+                Ports[p].NameTP.apply();
+                LOG_ERROR("Too long port name, maximum of 15 characters supported!");
                 return false;
             }
+
+            strncpy(Ports[p].settings.name, Ports[p].NameTP[0].getText(), sizeof(Ports[p].settings.name));
+            if (configureOutput(p))
+            {
+                if (readOutputSettings())
+                {
+                    Ports[p].NameTP.setState(IPS_OK);
+                    Ports[p].NameTP.apply();
+                    return true;
+                }
+            }
+            return false;
         }
     }
-
     return INDI::DefaultDevice::ISNewText(dev, name, texts, names, n);
 }
 
 bool KOMAHUB::ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n)
 {
-    if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
+    if (dev == nullptr || strcmp(dev, getDeviceName()) != 0)
     {
-        for (unsigned int p = 0; p < numPorts; ++p)
+        return false;
+    }
+    for (unsigned int p = 0; p < numPorts; ++p)
+    {
+        if (Ports[p].DutyCycleNP.isNameMatch(name))
         {
-            if (!strcmp(Ports[p].DutyCycleNP.name, name))
-            {
-                IUUpdateNumber(&Ports[p].DutyCycleNP, values, names, n);
+            Ports[p].DutyCycleNP.update(values, names, n);
 
-                if (setPwmDuty(p, static_cast<unsigned char>(Ports[p].DutyCycleN.value)))
+            if (setPwmDuty(p, static_cast<unsigned char>(Ports[p].DutyCycleNP[0].getValue())))
+            {
+                Ports[p].DutyCycleNP.setState(IPS_OK);
+                Ports[p].DutyCycleNP.apply();
+                readStatus();
+                return true;
+            }
+            return false;
+        }
+        if (Ports[p].FuseNP.isNameMatch(name))
+        {
+            Ports[p].FuseNP.update(values, names, n);
+            Ports[p].settings.fuseCurrent = static_cast<unsigned char>(Ports[p].FuseNP[0].getValue() * 10.0);
+            if (configureOutput(p))
+            {
+                if (readOutputSettings())
                 {
-                    Ports[p].DutyCycleNP.s = IPS_OK;
-                    IDSetNumber(&Ports[p].DutyCycleNP, nullptr);
-                    readStatus();
+                    Ports[p].FuseNP.setState(IPS_OK);
+                    Ports[p].FuseNP.apply();
                     return true;
                 }
-                return false;
             }
-            if (!strcmp(Ports[p].FuseNP.name, name))
-            {
-                IUUpdateNumber(&Ports[p].FuseNP, values, names, n);
-                Ports[p].settings.fuseCurrent = static_cast<unsigned char>(Ports[p].FuseN.value * 10.0);
-                if (configureOutput(p))
-                {
-                    if (readOutputSettings())
-                    {
-                        Ports[p].FuseNP.s = IPS_OK;
-                        IDSetNumber(&Ports[p].FuseNP, nullptr);
-                        return true;
-                    }
-                }
-                return false;
-            }
+            return false;
         }
     }
 
@@ -741,66 +640,67 @@ bool KOMAHUB::ISNewNumber(const char *dev, const char *name, double values[], ch
 
 bool KOMAHUB::ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n)
 {
-    if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
+    if (dev == nullptr || strcmp(dev, getDeviceName()) != 0)
     {
-        for (unsigned int p = 0; p < numPorts; ++p)
+        return false;
+    }
+
+    for (unsigned int p = 0; p < numPorts; ++p)
+    {
+        if (Ports[p].ModeSP.isNameMatch(name))
         {
-            if (!strcmp(Ports[p].ModeSP.name, name))
+            Ports[p].ModeSP.update(states, names, n);
+            int mode = IUFindOnSwitchIndex(&Ports[p].ModeSP);
+            if (mode >= OUTPUT_OFF && mode <= OUTPUT_PWM)
             {
-                IUUpdateSwitch(&Ports[p].ModeSP, states, names, n);
-                int mode = IUFindOnSwitchIndex(&Ports[p].ModeSP);
-                if (mode >= OUTPUT_OFF && mode <= OUTPUT_PWM)
+                Ports[p].settings.type = static_cast<unsigned char>(mode);
+                if (configureOutput(p))
                 {
-                    Ports[p].settings.type = static_cast<unsigned char>(mode);
-                    if (configureOutput(p))
+                    if (readOutputSettings())
                     {
-                        if (readOutputSettings())
-                        {
-                            Ports[p].ModeSP.s = IPS_OK;
-                            IDSetSwitch(&Ports[p].ModeSP, nullptr);
-                            return true;
-                        }
+                        Ports[p].ModeSP.setState(IPS_OK);
+                        Ports[p].ModeSP.apply();
+                        return true;
                     }
                 }
-                return false;
             }
-            if (!strcmp(Ports[p].EnableSP.name, name))
+            return false;
+        }
+        if (Ports[p].EnableSP.isNameMatch(name))
+        {
+            Ports[p].EnableSP.update(states, names, n);
+            int mode = Ports[p].EnableSP.findOnSwitchIndex();
+            switch (mode)
             {
-                IUUpdateSwitch(&Ports[p].EnableSP, states, names, n);
-                int mode = IUFindOnSwitchIndex(&Ports[p].EnableSP);
-                switch (mode)
-                {
-                    case 0:
-                        if (setRelay(p, false))
-                        {
-                            Ports[p].EnableSP.s = IPS_OK;
-                            IDSetSwitch(&Ports[p].EnableSP, nullptr);
-                            readStatus();
-                            return true;
-                        }
-                        break;
-                    case 1:
-                        if (setRelay(p, true))
-                        {
-                            Ports[p].EnableSP.s = IPS_OK;
-                            IDSetSwitch(&Ports[p].EnableSP, nullptr);
-                            readStatus();
-                            return true;
-                        }
-                        break;
-                    case 2:
-                        if (resetFuse(p))
-                        {
-                            Ports[p].EnableSP.s = IPS_OK;
-                            IDSetSwitch(&Ports[p].EnableSP, nullptr);
-                            readStatus();
-                            return true;
-                        }
-                        break;
-                }
+                case 0:
+                    if (setRelay(p, false))
+                    {
+                        Ports[p].EnableSP.setState(IPS_OK);
+                        Ports[p].EnableSP.apply();
+                        readStatus();
+                        return true;
+                    }
+                    break;
+                case 1:
+                    if (setRelay(p, true))
+                    {
+                        Ports[p].EnableSP.setState(IPS_OK);
+                        Ports[p].EnableSP.apply();
+                        readStatus();
+                        return true;
+                    }
+                    break;
+                case 2:
+                    if (resetFuse(p))
+                    {
+                        Ports[p].EnableSP.setState(IPS_OK);
+                        Ports[p].EnableSP.apply();
+                        readStatus();
+                        return true;
+                    }
+                    break;
             }
         }
     }
-
     return DefaultDevice::ISNewSwitch(dev, name, states, names, n);
 }
